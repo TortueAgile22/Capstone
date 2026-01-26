@@ -1,0 +1,30 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env_Capstone/*
+pip-log.txt
+pip-delete-this-directory.txt
+
+# --- Distribution / Packages ---
+dist/
+build/
+*.egg-info/
+
+# --- VS Code ---
+.vscode/
+.history/
+
+# --- Jupyter Notebook ---
+.ipynb_checkpoints
+
+# --- Système (macOS) ---
+.DS_Store
+
+# --- Data ---
+Dataset/*
+
+# --- Files ---
+Files/*
