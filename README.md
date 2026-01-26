@@ -15,20 +15,20 @@ pip install -r requirements.txt
 
 Avant d'exécuter les notebooks, vous devez structurer vos fichiers de données comme suit :
 
-1. Placez vos fichiers sources dans le dossier ./Dataset/bronze/.
+1. Placez vos fichiers sources dans le dossier `./Dataset/bronze/`.
 
 2. Pour les données météorologiques spécifiques, créez des sous-dossiers respectant la nomenclature suivante :
-    • ./Dataset/bronze/weather_{nom_de_la_station}/
+    • `./Dataset/bronze/weather_{nom_de_la_station}/`
 
-    • Note : {nom_de_la_station} doit être remplacé par C ou P.
+    • Note : `{nom_de_la_station}` doit être remplacé par **C** ou **P**.
 
 Exemple de structure :
 
 .
-├── Dataset/
-│   └── bronze/
-│       ├── weather_C/
-│       │   └── Aiglemont_hourly.csv
-│       └── weather_P/
-└── py_ipynb_files/
-    └── analyse_exploration.ipynb
+├── Dataset/ <br>
+│   └── bronze/ <br>
+│       ├── weather_C/ <br>
+│       │   └── Aiglemont_hourly.csv <br>
+│       └── weather_P/ <br>
+└── py_ipynb_files/ <br>
+    └── Data_Analysis.ipynb <br>
