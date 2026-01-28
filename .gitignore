@@ -25,6 +25,8 @@ build/
 
 # --- Data ---
 Dataset/*
+py_ipynb_files/bronze/*
 
 # --- Files ---
 Files/*
+
