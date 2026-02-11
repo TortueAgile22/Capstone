@@ -20,33 +20,33 @@ if station_choice == "station_C":
     T_END = "2026-01-08"
     OUTPUT_PATH = "../Dataset/bronze/weather_C_latest/"
     CITIES = [
-        {"name": "Aiglemont", "lat": 49.7803, "lon": 4.7648},
-        {"name": "Chalandry-Elaire", "lat": 49.7128, "lon": 4.7478},
-        {"name": "Damouzy", "lat": 49.7981, "lon": 4.6739},
-        {"name": "Dom-le-Mesnil", "lat": 49.6917, "lon": 4.8050},
-        {"name": "Flize", "lat": 49.6983, "lon": 4.7739},
-        {"name": "La-Francheville", "lat": 49.7289, "lon": 4.7144},
-        {"name": "La-Grandville", "lat": 49.7806, "lon": 4.7933},
-        {"name": "Les-Ayvelles", "lat": 49.7153, "lon": 4.7578},
-        {"name": "Montcy-Notre-Dame", "lat": 49.7758, "lon": 4.7431},
-        {"name": "Prix-les-Mezieres", "lat": 49.7547, "lon": 4.6853},
-        {"name": "Saint-Laurent", "lat": 49.7644, "lon": 4.7631},
-        {"name": "Ville-sur-Lumes", "lat": 49.7511, "lon": 4.7906},
-        {"name": "Villers-Semeuse", "lat": 49.7394, "lon": 4.7514},
-        {"name": "Warcq", "lat": 49.7700, "lon": 4.6800}
+        {"name": "Aiglemont", "lat": 49.79022, "lon": 4.770087},
+        {"name": "Chalandry-Elaire", "lat": 49.707747, "lon": 4.756461},
+        {"name": "Damouzy", "lat": 49.807862, "lon": 4.682754},
+        {"name": "Dom-le-Mesnil", "lat": 49.685858, "lon": 4.809973},
+        {"name": "Flize", "lat": 49.695297, "lon": 4.775173},
+        {"name": "La-Francheville", "lat": 49.7333, "lon": 4.7167},
+        {"name": "La-Grandville", "lat": 49.783, "lon": 4.795},
+        {"name": "Les-Ayvelles", "lat": 49.7, "lon": 4.7667},
+        {"name": "Montcy-Notre-Dame", "lat": 49.790675, "lon": 4.743459},
+        {"name": "Prix-les-Mezieres", "lat": 49.756, "lon": 4.687},
+        {"name": "Saint-Laurent", "lat": 49.759138, "lon": 4.776074},
+        {"name": "Ville-sur-Lumes", "lat": 49.755706, "lon": 4.79606849833},
+        {"name": "Villers-Semeuse", "lat": 49.741144, "lon": 4.751054},
+        {"name": "Warcq", "lat": 49.768287, "lon": 4.666435}
     ]
 elif station_choice == "station_P":
     T_START = "2023-11-10" 
     T_END = "2026-01-06"
     OUTPUT_PATH = "../Dataset/bronze/weather_P_latest/"
     CITIES = [
-        {"name": "Beaumont-sur-Oise", "lat": 49.1431, "lon": 2.2856},
-        {"name": "Bernes-sur-Oise", "lat": 49.1622, "lon": 2.3006},
-        {"name": "Chambly", "lat": 49.1658, "lon": 2.2472},
-        {"name": "Mours", "lat": 49.1347, "lon": 2.2619},
-        {"name": "Nointel", "lat": 49.1286, "lon": 2.2922},
-        {"name": "Persan-Beaumont", "lat": 49.1539, "lon": 2.2706},
-        {"name": "Ronquerolles", "lat": 49.1658, "lon": 2.2153}
+        {"name": "Beaumont-sur-Oise", "lat": 49.140098, "lon": 2.300213},
+        {"name": "Bernes-sur-Oise", "lat": 49.165413, "lon": 2.301276},
+        {"name": "Chambly", "lat": 49.17181, "lon": 2.24657},
+        {"name": "Mours", "lat": 49.130395, "lon": 2.264151},
+        {"name": "Nointel", "lat": 49.128869, "lon": 2.294343},
+        {"name": "Persan-Beaumont", "lat": 49.150002, "lon": 2.26667},
+        {"name": "Ronquerolles", "lat": 49.167704, "lon": 2.213417}
     ]
 else:
     print(f"❌ Erreur : '{station_choice}' n'est pas un argument valide.")
