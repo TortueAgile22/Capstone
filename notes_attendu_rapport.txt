@@ -1,0 +1,7 @@
+
+Avec notre modèle, faire des prédictions récursives
+j'essaie de prédire à t+3 , et avec cette valeur je regarde si je prédis à t+6?
+pour voir si le modèle dérive ou pas ou si il arrive à capter cette tendance.
+
+
+avoir une idée de la robustesse des résultats en changeant la sliding window et l'horizon de temps

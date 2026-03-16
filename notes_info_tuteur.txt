@@ -1,0 +1,261 @@
+____________________________________________
+
+Séance 1 du 15 janvier - Présentation :
+____________________________________________
+
+On travaille sur 2 Stations d'epuration à bout activé : Station P et station C.
+
+Notre objectif pour ces deux stations : 
+- prédiction du débit d'entrée
+
+Différentes stations : avec tuyau unitaire ou réseau séparé (un réseau séparé a un tuyau qui sépare l’eau usée de l'eau de la pluie, et donc seule l'eau usée entre dans la station séparée).
+
+Deux exemples : station P réseau séparé, l’autre station C 100 % unitaire. Donc différence dans les données:
+débit de la station C est en effet très corrélé à la météo, si il pleut bcp, débit important.
+
+A l’entrée : brique (bassin d’orage : bassin de stockage pour éviter de faire déborder les différents bassins, avec une pompe derrière).
+Notre bébimètre : mesure de débit est après la pompe. Donc la donnée qu’on va voir sera les données de la pompe qui sont fortement corrélées aux données d’entrée et de débit.
+Question de lissage de données pour retirer cette pompe.
+Par ex parfois débit de 0 m3/h car pendant un certain temps on ne pompe pas d’eau mais ça veut pas dire qu’on va pas pomper d’eau.
+Par ex On peut changer les données et remplacer un débit de 0 m3/h à 100 m3/h (minimum).
+
+Débit d’entrée de la station P.
+Sur la courbe on a des valeursà 0 donc on pompe l’eau plus tard. Il faudra faire des opérations de lissage.
+Pour prédire : on a besoin d’un horizon temporel (si on a prédit à 3h ou 12h pas le même impact) ; Il faut pas prédire un temps trop faible car on a une énorme variance d’une heure à l’autre.
+On veut pas une prédiction en dessous d’un horizon de temps de 3h. Il faudra faire plusieurs modèles : horizon de temps de 3h, 4h. Etc.
+Il va falloir faire une bonne analyse de données : comprendre les patterns etc.
+
+
+D'autres entreprises ont déjà fait ce projet, comment ont-ils fait?
+quand ils prédisent le débit, ils découpent en plusieurs parties. Ils découpent une composante cyclique (activité humaine). Ils distinguent aussi les eaux de pluies et les eaux de ressuyages. Ressuyage = il pleut, de l’eau rentre dans les tuyaux par ex sur les trottoirs (composante du réseau unitaire lié à la pluie).
+Autre partie du ressuyage : eau absorbé par la terre, épongé d’une certaine manière puis relaché dans le réseau par infiltration plus tard.
+Il pleut, ça fait de l’eau → grande infiltration et espèce de lag sur l’eau qu’on va avoir dans notre réseau (truc un peu retardé par rapport à la pluie et qu’on va avoir dans notre réseau. Ca pourrait etre une idée de l’intégrer dans le modèle car physiquement cest comme ça que ça se passe).
+
+
+1. Creuser la donnée, trouver des patterns de saisonnalité. Comprendre la physique/chimie derrière.
+
+Entre débit de sortie et d’entrée y’a t-il un écart ? L’eau passe en 24H, on sait pas exactement le délai entre l’eau qui rentre et qui sort. Comprendre ce qui se passe dans une station.
+
+Le niveau des nappes phréatiques et des fleuves alentours apparemment influencent le débit. (API gouvernementale pour y accéder)
+
+Réduire la granularité pour diminuer la taille du csv.
+
+station C besoin pour sûr des données météo.
+
+→ donner de la visibiltié aux exploitants. Si il pleut bcp sur les 2 semaines, ils ont besoin de réduire leur poids de biomasse poiur compenser les effets de la pluie
+lui il fait RL sur 2-3H et exploitants : plutot 2 3 sem
+
+____________________________________________
+
+Séance 2 du 28 janvier :
+____________________________________________
+
+Température : en temps sec eau évaporée n’arrive pas à la station
+f1 f2 ? → charleville : il y a 2 fils. L’eau arrive au mm endroit puis c’est subdivisé en 2 et on a 2 bassins en parallèle qui travaillent.
+2 jeux de capteurs qui traitent la mm pollution en entrée mais qui fonctionnent pas exactement de la mm manière car ils prennent des spécificités locales différentes (ex:biomasse etc)
+
+on cherche à prédire : QUE entry_debit (il se sépare en entry_debit_f1 et entry_debit_f2). Débit d’entrée de f1 devrait être le débit d’entrée de f2. 
+En théorie on s’en débarrasse mais à creuser avec les données.
+
+Retours suppresseurs et vannes, c’est quoi ?
+On a 5 suppresseurs qui s’activent independamment
+les vannes c’est dans quel bassin va le surpresseur en qst.
+Il faudrait qu’il nous agrège les données pour le coup.
+
+
+On se concentre donc sur entry_debit et peut etre f1 f2.
+
+Distribution Ammonium etc :
+Standardscaler si jamais la distrib est standard. La notre n’est pas normale,  elle est asymétrique donc pas normalisation accurate. En revanche minmax scaler sachant que ammonium pas au dessus de 10mg/L
+
+IMPORTANT :
+LES DONNEES DU DEBIT POUR STATION P SONT ETRANGES, A PARTIR DU 27 MARS 2025 ELLES AUGMENTENT BRUSQUEMENT ET SE RESTABILISENT (COMME UNE SORTE DE TRANSLATION)
+AINSI LES PREMIERS MODELES SE CONCENTRENT SUR LA DEUXIEME PARTIE DES DONNEES A PARTIR DU 27 MARS 2025.
+
+Pour les prochaines fois : 
+
+    • Charleville compliquée donc analyser différence entre débit d’entrée et débit d’entrée des fils
+    • croiser données méto station + données capteur
+    • + voir saisonnalité
+    • Bien prendre en compte la précipitation de toutes les villes (amont ou aval confondu) car on a toujours un point central très bas et tout « marche » avec la gravité car les tuyaux sont en pentes.
+    • creuser encore, plus en détail spécificité de la station C
+    • est-ce qu’on a des saisonnalités pour creuser les features pour le modèle. → comme ça par ex on met juste la feature mois si on a une saisonnalité mensuelle.
+Saisonnalité journalière, horaire .. ?
+    • à quel pt la météo est corrélée etc.
+
+____________________________________________
+
+Séance 3 du 6 février :
+____________________________________________
+
+
+
+Sur le graphe quand on a mis 
+Souvent pic de pluie : même que les pics de débit
+On voit que la pluie donne une info mais est-ce que le max donne pas une meilleure info (effet d’accumulation)? On peut peut être regarder les quantiles ou les max pour trouver une info supplémentaire
+autre métrique que la moyenne (covariance etc...)
+
+
+Granularité de la donnée ? Si on agrège à 1h, corrélation heure par heure. Mais peutêtre qu’on veut une corrélation plus globale sur 3-4h ? pour des cycles de pluie plus longs, et identifier là où on a un vrai impact de la pluie.
+
+Essayer d’aller plus loin dans les corrélations  pour identifier les phénomènes de ressuyage ?
+Voir si y’a pas un lag différent par ville ?
+
+
+On peut commencer à faire un 
+
+lisse 3h prédire à 1h : triche car on agrège trop notre courbe, on prédit un delta qui est hyper fin
+
+j’ai une tendance avec les boxplot, donc garder les données entre les quantiles 1 et 3.  et refaire l’analyse hebdo pour voir ce que ça change.
+
+Nicolas :
+f1+f2 = débit d’entrée globalement donc si on a une anomalie pour un capteur, une autre peut prendre le relai
+
+____________________________________________
+
+Séance 4 du 12 février :
+____________________________________________
+
+Le tuteur a confirmé mon inquiétude que quand on fetch les données météo, on le fait avec UTC = True (donc pas heure locale de la France alors que donnée débit en heure locale France)
+
+--> Pour station C on remarque globalement la meme tendance mais ça diminue d'une année à l'autre : diminution de la population de Charleville?
+
+Le tuteur dit de regarder : saisonnalité intraday, mensuelle, annuelle, intra heure
+mettre la démographie?
+
+--> Pour station P on se rend bien compte que la pluie a en fait un impact, même si le réseau est séparé !
+En effet il peut y avoir des "bugs" dans le réseau où il y a quand même l'eau de la pluie qui entre, + il y a les phénomènes
+de ressuyage (la pluie s'infiltre).
+
+
+--> encodage de l'h en cyclique. le mieux, c'est qu'on voit que la variance intra day est stable donc au lieu de faire apprendre au modele un sin et un cos qui vont pas permettre de retrouver de manière fidele le truc, modeliser la courbe qui fait cette tendance? et le modele doit trouver le paramètre qui fit le mieux cette courbe.
+(quand on regarde les boxplot par h : on veut la fonction mathématique qui ressemble à la courbe des médianes"
+
+--> interaction pluie/temperature : essayer des polynomial features!
+Le tuteur nous a donné une de ses features polynomiales qui modélise l'usage humain :
+beta + alpha * np.cos(hour * tau + phi) ** 2 + alpha2 * np.sin(hour * tau + phi)
+
+
+Avis tuteur sur travail de Nicolas :
+si tu mets pas le lag tu essaies de prédire un débit juste avec l'info temporelle. avec l'info du débit d'avant c'est plus simple car on essaie juste de prédire l'incrément.
+-> cest quoi le MAE ou le R2 sur le train et différence avec le test?
+--> package time series split (cross validation) ça fait du window et le modele apprend à pas overfit en fonction du temps
+et après mettre un validation set.
+- Essayer juste une régression linéaire !
+- Faire prédiction à 3, 12, 24. (un modèle pour chaque)
+- mettre valeur par défaut : si en dessous de 100 mettre à 100 le débit
+- lisser sur 1H mais échantillonnage à 15 min, on verra mieux les tendances saisonnières (ça cest une note pour nicolas, je sais plus si nous on l'avait bien fait)
+- COMPRENDRE les pics non prédits
+- met un échantillonnage à 15mn plutôt que 1h car ça rend difficile à lire
+
+____________________________________________
+
+Séance 5 du 26 février :
+____________________________________________
+
+Problèmes/to do list pas encore réglés :
+- Essayer juste une régression linéaire.
+- prédiction à 3, 12, 24. (un modèle pour chaque)
+- cross validation avec package time series split
+- faire des prédictions récursives : j'essaie de prédire à t+3 , et avec cette valeur je regarde si je prédis à t+6.
+- changement dans le débit à partir de avril. faire un modèle qui combine les 2 périodes.
+- Nettoyage :
+- données heure UTC
+- reprendre dataset extrait de Laurian
+
+Mes questions:
+1) comment gérer le cycle de la pompe pour avoir le débit en entrée ?
+2) Peut-on partir du principe qu'on aura accès à des prévisions de pluie de Meteo France par ex? OUI
+
+NOTES
+
+Partie Nicolas:
+Ton modele ce qu'il fait : il prend (t-3) et essaie de predire t. Tu essaies de predire un delta.
+Il faut regarder ton nv de performance % la variation entre t et (t+3). Ce qui est intéressant est de regarder à quel point on arrive à prédire la variation.
+-> Regarder le delta moyen entre t et t+3.
+regarder la distribution des erreurs
+-> hardcap à 1700
+-> ajouter ecart type
+-> savoir répondre à la question : cest quoi la granularité?
+grâce au shap on voit que : l'impact de la pluie est inclu dans les autres features.
+tu peux pas predire le futur à partir du passé seulement
+comprendre : comment le modele se comporte à des points précis?
+on a fait la shap value pour l'ensemble des points mais faire pour certains points précisément:
+ex plage où il y a beaucoup plu et dans cette phase, voir l'importance des features. et comparer quand ça a pas beaucoup plu.
+
+il (nicolas) predit quelque chose (le delta) de tres faible donc il a un bon resultat --> à corriger pour prochaine séance
+
+resultat : ça depend totalement de ce qu'on predit, à 3h, à 2h... 
+lui il faisait 3-6-12-24.
+
+-> feature engineering sur le rain. comprendre comment lui donner un impact.
+FAIRE LA méthode de création de feature polynomiale !!! LE TUTEUR EN A DEJA PARLE DANS LES ANCIENNES SEANCES !
+il nous avait donné : beta + alpha * np.cos(hour * tau + phi) ** 2 + alpha2 * np.sin(hour * tau + phi)
+
+faut arriver à faire marcher les rouages ensemble.
+
+Notes moi:
+OK pour dire qu'on aura les prévisions futures de la pluie ! Donc  OK d'ajouter la prévision météo à t+1, t+2 et t+3 pour une prédiction
+du débit à t+3
+Mettre une valeur minimale par defaut pour les pics bas (à 100 m3/h) !!!!
+
+Notes Laurian :
+Prophet a une methode theorique pour tester les ordres mais il prend pas forcement les bons.
+Effet de la pluie evident.
+Effet saisonnier mais pas constant.
+
+____________________________________________
+
+Séance 6 du 5 mars :
+____________________________________________
+
+A GERER :
+IMPORTANT, ON EN A PAS PARLE AVANT MAIS IL FAUT NORMALISER LES DONNEES !!!!!!!
+- question de lissage 
+- FAIRE UNE FEATURE exponentionelle sur la pluie !!! pour lui donner de l'importance !
+- et feature seuil sur la pluie aussi.
+- essayer davoir des plots comparables avec ceux des modèles de Laurian (SARIMA)
+- apparemment on peut prendre une plage de donnée plus petite que 1 an pour avoir de bons résultats
+- pour avoir les vacances pas obligé d'avoir un time series split.
+- cross validation classique ok
+- essayer de corriger les données
+- ok essayer lstm
+- ajouter shap (station P)
+- essayer de predire a d'autres horizons, 6h, 12H etc.
+- faire des prédictions récursives : j'essaie de prédire à t+3 , et avec cette valeur je regarde si je prédis à t+6.
+
+
+fonction : beta + alpha * np.cos(hour * tau + phi) ** 2 + alpha2 * np.sin(hour * tau + phi)
+  au lieu de sin hour et cos hour. 
+(courbe du boxplot debit par h)
+
+- feature polynomiale pluie a t-1, debit a t-1, yen a multiplié yen a au carré, additionné etc.
+- "tu normalises la pluie et derriere tappliques ton exp"
+
+arbre : controler la profondeur, le nb d'arbre
+un arbre petit qui overfit peu ça doit être 5-6  si t'as vrm bcp de features tu peux aller à plus mais pas bcp +. 3 arbres ça semble vraiment peu.
+
+
+CE QUE J'AI FAIT ET VU DANS MON TRAVAIL :
+
+PREDICTION DEBIT A T+3:
+- Correction du décalage UTC : performances stagnent
+- Ajout de la météo des 6 villes voisines : performances dégradées, on perd un point de R2
+- Ajout de feature pour le ressuyage : rain_sum_7d qui apparait dans le top 10 des features tandis que rain_sum_3h disparait du top 10. phénomène de ressuyage
+- Ajout des features de prévision de pluie sur 1h, 2h, 3h. Performance améliorée avec R2 qui gagne 6 points, RMSE diminue de 7m3/h par ex --> intrusion directe de l'eau
+- Les pics sont liés à des "explosions" de débit rares dans les données mais expliquées par la pluie. Le modèle n'en voit pas assez : on a ajouté toutes les données avec la feature booléenne, mais la distribution des pics est la même finalement. Mais je sais pas trop comment faire les folds? Et on a de l'overfitting car il s'entraine principalement sur les données avant le shift lorsqu'on prédit sur les données après le shift. Donc on garde que les données de la deuxième période.
+- ajout de variable 'is_crue' et 'intensite_crue' pour les pics
+- dans les pires erreurs. surestimation le 28 janvier 2025 (dimanche) et le 4 janvier 2025 (samedi) matin :  ajout de variable pour le Week end, pour les jours fériés. malheureusement pas de périodes de noel dans le split de train. (train de 9 avril 2025 au 26 novembre 2025 20H, test de 26 novembre 2025 21H au 6 janvier 2026 14H)
+
+- essai rapide weight sampling xgboost presque aucun changement (diminutionde la mae sur les pics mais dégradation des autres métriques)
+- idée: oversampling et dupliquer des pics?
+combiner des modèles spéciaux pour gérer les cas de pics particuliers ou période particuliere (mais faudrait toutes les données)
+
+A DIRE : 
+- Comme on utilise XGBoost et pas une régression linéaire, je prédis pas de variation delta.
+En effet la target c'est df_model['target'] = df_model['debit'].shift(-3)
+et pas df_model['target'] = df_model['debit'].shift(-3) - df_model['debit']
+Actuellement, ta Target est le debit(t+3).Pour XGBoost, le debit(t) qu'on donne en feature n'est pas un point de départ pour une addition, c'est juste une condition de filtrage comme une autre (au même titre que le jour de la semaine).
+
+Il se dit par ex "SI le débit actuel est > 300, ET SI la pluie future est > 2 mm, ALORS la valeur finale absolue que je dois prédire est de 550 m³/h (parce que c'est la moyenne absolue que j'ai vue dans mon historique pour cette boîte). Le modèle ne calcule pas l'écart entre les deux.
+

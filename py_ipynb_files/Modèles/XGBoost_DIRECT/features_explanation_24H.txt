@@ -1,0 +1,302 @@
+================================================================
+FEATURES DU MODÈLE XGBoost DIRECT H=24h — Station P
+================================================================
+Modèle : XGBoost, prédiction directe du débit à t+24h
+Données : post-shift (2025-04-03 → 2026-01-06)
+Nb total de features : 63  (G6 adapté uniquement — G12 non retenu)
+
+Ce fichier se concentre sur les DIFFÉRENCES avec les modèles
+H=3h, H=6h et H=12h. Pour la description complète des features
+communes, voir :
+  → features_explanation.txt       (modèle H=3h)
+  → features_explanation_6H.txt    (modèle H=6h)
+  → features_explanation_12H.txt   (modèle H=12h)
+
+================================================================
+POURQUOI H=24h EST FONDAMENTALEMENT DIFFÉRENT
+================================================================
+
+H=24h est un horizon à part entière pour deux raisons :
+
+1. Prédire à H=24h = prédire la même heure demain.
+   La semi-périodicité de H=12h devient une PÉRIODICITÉ COMPLÈTE.
+   Le profil journalier (cyclic_custom) devient la feature
+   la plus importante de loin : #1 à 22.3% (vs 8.5% à H=12h).
+   Raisonnement : si le débit moyen à 14h est 210 m³/h,
+   demain à 14h il sera probablement aussi ~210 m³/h
+   (sauf événement météo exceptionnel).
+
+2. target_hour == current_hour.
+   À H=24h, l'heure cible = l'heure actuelle. Conséquences :
+   - target_hour_sin/cos = hour_sin/cos → REDONDANT, non ajouté
+   - Mais le JOUR cible change : demain peut être un weekend,
+     un lundi matin, un jour férié → target_day features utiles
+
+3. G12 (baseflow, lags pluie historiques) N'AIDE PAS.
+   Résultat ablation : H24-G6 = 47.92 vs H24-G12 = 48.67.
+   G12 dégrade même légèrement le modèle (+0.75 MAE).
+   Explication : à H=24h, cyclic_custom + debit_lag24 +
+   debit_lag48 capturent déjà toute l'information d'état
+   du système. Les lags de pluie ponctuels (rain_lag_6h etc.)
+   n'apportent rien de plus — ils sont noyés dans le bruit.
+
+4. Le naïf à H=24h est le meilleur naïf de tous les horizons.
+   MAE naïf H=24h = 57.61 m³/h (vs 80.97 à H=3h, 117.52 à H=6h,
+   147.34 à H=12h). La persistence debit(t) → debit(t+24h)
+   bénéficie de la périodicité journalière : le débit actuel
+   est corrélé au débit demain à la même heure.
+   → Gain vs naïf = 28.9% seulement (le plus bas de tous),
+   mais MAE absolue = meilleure de tous (40.95 m³/h).
+
+================================================================
+ABLATION STUDY — CHOIX DES FEATURES (quick_ablation_24h.py)
+================================================================
+
+3 configs testées par sliding window CV (10 folds) :
+
+Config                                  | MAE CV | ΔMAE
+----------------------------------------|--------|------
+H12-G12 (features H=12h sans adapt.)   | 56.11  |  ref
+H24-G6  (G6 adapté H=24h)              | 47.92  | -8.18  ← retenu
+H24-G12 (G6 + lags + baseflow)         | 48.67  | -7.43
+
+Conclusions :
+  1. Sans adaptation (H12-G12 à H=24h) : perte de -8.18 MAE.
+     Les features 12h sont trop courtes et ne contiennent pas
+     les lags de débit 24h ni la pluie oracle à H=24h.
+  2. H24-G6 bat H24-G12 (-0.75 MAE) : les features G12
+     (rain_lag ponctuels, baseflow) ajoutent du bruit à H=24h.
+  3. La config H24-G6 est retenue (63 features).
+
+================================================================
+GROUPE G6 ADAPTÉ H=24h  (63 features)
+================================================================
+
+──────────────────────────────────────────────────────────────
+A) LAGS DE DÉBIT — Ajout de debit_lag24 et debit_lag48
+──────────────────────────────────────────────────────────────
+
+debit_lag24  =  débit réel à t−24h  [AJOUT H=24h]
+debit_lag48  =  débit réel à t−48h  [AJOUT H=24h — avant-hier]
+
+  debit_lag24 : même heure hier → exploite la périodicité 24h.
+  Si le débit hier à 14h était 210 m³/h, demain à 14h il sera
+  probablement dans le même ordre (absent des autres horizons).
+
+  debit_lag48 : avant-hier même heure → renforce la tendance
+  plurijournalière (si montée progressive depuis 2 jours,
+  demain sera probablement encore en hausse).
+
+  Importance : debit à t (#11, 1.5%), debit_lag7d (#20, 1.2%)
+  Note : debit_lag24 n'apparaît pas dans le top 20 individuel
+  car cyclic_custom le "résume" déjà en grande partie.
+
+──────────────────────────────────────────────────────────────
+B) PENTES TEMPORELLES — Extension à 24h
+──────────────────────────────────────────────────────────────
+
+slope_24h  =  debit(t) − debit(t−24)   [AJOUT H=24h]
+
+  Capture si le débit est globalement en hausse ou en baisse
+  par rapport à hier même heure. Si slope_24h = +100 m³/h →
+  le système a monté 100 m³/h depuis hier → probable continuation.
+
+──────────────────────────────────────────────────────────────
+C) INTENSITÉ PLUIE — Extension à 24h
+──────────────────────────────────────────────────────────────
+
+rain_sum_24h  =  cumul de pluie sur 24 dernières heures (mm)
+rain_max_24h  =  max de pluie horaire sur 24h  → #12 (1.5%)
+  [AJOUT H=24h]
+
+  rain_max_24h apparaît dans le top 20 (1.45%) : un pic de pluie
+  dans les 24 dernières heures peut encore influencer le débit
+  24h plus tard via l'humidité résiduelle des sols.
+
+──────────────────────────────────────────────────────────────
+D) PLUIE FUTURE — Couverture complète H=24h  [CHANGEMENT MAJEUR]
+──────────────────────────────────────────────────────────────
+
+À H=12h : prev_pluie_1h à 12h  + cumul_12h
+À H=24h : prev_pluie_1h à 24h  + cumul_12h + cumul_24h
+  (24 features pluie horaire, TOUTES les heures de l'horizon)
+
+  Les nouvelles features :
+  prev_pluie_13h à 24h   [AJOUT H=24h]
+
+  Importances notables :
+  prev_pluie_24h  = #2  (7.16%) ← pluie exactement à t+24h
+  prev_pluie_23h  = #4  (4.58%)
+  prev_pluie_22h  = #5  (3.30%)
+  prev_pluie_21h  = #6  (2.75%)
+  prev_pluie_20h  = #7  (1.71%)
+  prev_pluie_cumul_24h = #9 (1.53%)
+
+  Pattern identique aux autres horizons : la pluie oracle
+  à l'instant exact de la prédiction (prev_pluie_24h = #2)
+  est la feature pluie la plus informative.
+  La progression 13h→24h dans les rangs montre que les heures
+  les plus proches de l'horizon ont le plus de signal.
+
+  MAEpluie = 47.37 m³/h : meilleure de tous les horizons
+  (104.32 à H=3h → 79.53 → 56.38 → 47.37 à H=24h).
+  Les 24 features oracle couvrent exactement la fenêtre.
+
+──────────────────────────────────────────────────────────────
+E) FEATURES CALENDRIER CIBLE  [NOUVEAU — spécifique H=24h]
+──────────────────────────────────────────────────────────────
+
+target_is_weekend        = 1 si DEMAIN (t+24h) est samedi/dimanche
+target_is_monday_morning = 1 si DEMAIN est lundi avant 10h
+target_is_holiday        = 1 si DEMAIN est un jour férié
+
+  Justification :
+  À H=24h, on connaît avec certitude le calendrier de demain.
+  Le débit suit un profil humain fort (pointe matin/soir les
+  jours de semaine, profil plus plat le weekend). Ces features
+  encodent directement la "forme" du cycle attendu demain.
+
+  Exemple : si demain est samedi, le débit de pointe du matin
+  sera 15-20% plus faible que les jours de semaine.
+
+  target_is_weekend était dans le top 20 de l'ablation (1.4%)
+  mais moins visible dans le modèle final (potentiellement
+  capturé par cyclic_custom combiné à is_weekend).
+
+  Note : à H=3h/6h/12h, ces features n'ont pas été ajoutées
+  car le jour cible = même jour (H=3h/6h) ou quasi-même (H=12h).
+  À H=24h, le décalage d'un jour entier est garanti.
+
+──────────────────────────────────────────────────────────────
+F) FEATURES INCHANGÉES vs H=12h
+──────────────────────────────────────────────────────────────
+
+  Identiques :
+  - cyclic_custom (profil journalier ajusté) → #1 (22.3%)
+  - hour_sin, hour_cos → dans le top 20
+  - rain_sum_3h/6h/12h/3d/7d, rain_max_3h/6h/12h
+  - is_weekend, is_holiday, is_monday_morning (jour courant)
+  - en_crue, intensite_crue → en_crue = #3 (4.79%) ← remonte !
+  - ressuyage_exp → #15 (1.33%)
+  - rain_exp_norm, is_raining_hard
+  - debit, debit_lag1/3/6/12
+
+  en_crue remonte au #3 (4.79%) après être sorti du top 20 à H=12h.
+  Pourquoi ? À H=24h, savoir si le système est actuellement
+  en crue permet de savoir si demain sera aussi en crue (les
+  crues durent souvent 24-48h). C'est un signal fort que ni
+  cyclic_custom ni les lags ponctuels ne capturent directement.
+
+================================================================
+HYPERPARAMÈTRES — H=24h vs les autres horizons
+================================================================
+
+Paramètre         |  H=3h  |  H=6h  |  H=12h |  H=24h |  Commentaire
+------------------|--------|--------|--------|--------|----------------------------
+max_depth         |    6   |    6   |    6   |    6   |  identique partout
+learning_rate     |  0.05  |  0.03  |  0.03  |  0.05  |  retour à lr=0.05 (H=3h)
+subsample         |  0.9   |  0.9   |  0.9   |  0.7   |  + aléatoire (new)
+colsample_bytree  |  0.9   |  0.7   |  0.7   |  0.9   |  + de features par arbre
+n_estimators      |  300   |  300   |  300   |  300   |  identique (après scaling)
+n_features        |   48   |   58   |   73   |   63   |  ← baisse ! G12 non inclus
+
+colsample_bytree = 0.9 (retour à H=3h) : avec seulement G6 (63 features),
+on peut se permettre d'utiliser plus de features par arbre sans
+sur-corrélation. Contraste avec H=6h/12h qui utilisaient 0.7 avec G12.
+
+subsample = 0.7 (plus faible qu'avant) : avec le signal très dominant
+de cyclic_custom (22%), réduire le sous-échantillonnage des données
+force le modèle à ne pas trop se reposer sur ce signal unique.
+
+================================================================
+ÉVOLUTION DES IMPORTANCES : H=3h → H=6h → H=12h → H=24h
+================================================================
+
+Feature               | H=3h % | H=6h % | H=12h % | H=24h % | Tendance
+----------------------|--------|--------|---------|---------|----------
+cyclic_custom         |  2.7%  |  5.7%  |   8.5%  |  22.3%  | ↑↑↑↑ exponentiel
+prev_pluie_Xh (oracle)|  8.9%  |  7.3%  |   7.2%  |   7.2%  | stable (H+Xh)
+hour_cos              | 25.6%  |  6.6%  |   3.6%  |  ~1.5%  | ↓↓↓↓
+hour_sin              |  2.4%  |  6.4%  |   2.8%  |   1.3%  | variable
+debit_min_12h (G12)   |  1.4%  | 12.2%  |   1.2%  |  absent | pic H=6h
+en_crue               |  7.5%  |  <1%   |   <1%   |   4.8%  | remonte H=24h
+debit_lag12           | absent | absent |   9.1%  |  absent | seulement H=12h
+rain_max_24h          | absent | absent |  absent  |   1.5%  | nouveau H=24h
+target_is_weekend     | absent | absent |  absent  |   top20 | nouveau H=24h
+
+Lectures :
+  → cyclic_custom monte en flèche à H=24h (+13.8 points vs H=12h) :
+    la périodicité journalière complète est le signal roi
+  → hour_cos/sin continuent de chuter : à H=24h, l'heure actuelle
+    est moins informative que le profil moyen (cyclic_custom)
+  → en_crue revient (#3, 4.8%) après avoir disparu à H=6h/12h :
+    les crues durent souvent 24h+ → signal persistant utile
+  → debit_min (baseflow G12) = absent : G12 non retenu
+  → debit_lag12 = absent : n'existe qu'à H=12h (spécifique)
+
+================================================================
+PERFORMANCES COMPARÉES H=3h / H=6h / H=12h / H=24h
+================================================================
+
+Métrique          |  H=3h   |  H=6h   |  H=12h  |  H=24h  |
+------------------|---------|---------|---------|---------|
+MAE test (m³/h)   |  40.54  |  42.79  |  41.66  |  40.95  | ← H=24h ≈ H=3h !!
+RMSE test (m³/h)  |  60.41  |  66.44  |  64.59  |  63.17  |
+R² test           |  0.712  |  0.652  |  0.671  |  0.685  |
+MAEpics (m³/h)    | 135.20  | 159.95  | 157.35  | 149.19  | ← meilleur H=3h
+MAEpluie (m³/h)   | 104.32  |  79.53  |  56.38  |  47.37  | ← amélioration continue ↓
+MAE naïf (m³/h)   |  80.97  | 117.52  | 147.34  |  57.61  | ← U-shape ! naïf meilleur à H=24h
+Gain vs naïf      |  49.9%  |  63.6%  |  71.7%  |  28.9%  | ← chute !! naïf fort à H=24h
+Biais (m³/h)      |  -0.96  |  -1.83  |  -0.59  |  +0.79  | quasi nul, stable
+% dans LoA        |  94.3%  |  93.9%  |  93.8%  |  94.1%  | très stable (~94%)
+n_features        |   48    |   58    |   73    |   63    | ← baisse avec G12 non retenu
+
+Interprétations clés :
+
+  - MAE H=24h ≈ MAE H=3h (40.95 vs 40.54) : malgré 8× plus
+    d'horizon, la performance est quasi-identique en MAE absolue.
+    Deux phénomènes compensent : (1) cyclic_custom ancre très bien
+    la prédiction via la périodicité journalière, (2) la pluie
+    oracle sur 24h complètes donne une info météo parfaite.
+
+  - MAE naïf = 57.61 m³/h à H=24h (vs 80.97 à H=3h) :
+    contre-intuitif ! La persistence est MEILLEURE à H=24h qu'à
+    H=3h car debit(t) est corrélé à debit(t+24h) via le cycle 24h.
+    → Gain vs naïf s'effondre (28.9% vs 49.9%) car le naïf lui-même
+    bénéficie de la périodicité. Le modèle fait mieux, mais la
+    barre est plus haute.
+
+  - MAEpluie = 47.37 m³/h : meilleure de tous les horizons.
+    Les 24 features oracle couvrent exactement la fenêtre →
+    le modèle sait précisément quelle pluie va tomber jusqu'à t+24h.
+
+  - MAEpics = 149.19 m³/h : meilleure que H=6h/12h, proche H=3h.
+    Bénéfice inattendu : cyclic_custom ancre les pics de débit
+    nocturnes (crues du 5-7 décembre commencent après minuit)
+    mieux que les features de baseflow.
+
+  - % dans LoA = 94.1% : stable comme tous les horizons.
+    La dispersion des erreurs ne change pas avec l'horizon.
+
+================================================================
+PIRES ERREURS ET LIMITES RESTANTES
+================================================================
+
+Top pires erreurs (test set) :
+  05/12 00h  reel=690  pred=315  err=374  pluie=0.0mm
+  06/12 12h  reel=727  pred=366  err=360  pluie=0.0mm
+  05/12 01h  reel=631  pred=299  err=331  pluie=0.0mm
+
+Même pattern sur tous les horizons :
+  - Crues de décembre 2025 (05/12, 06/12, 20/12, 21/12)
+  - Débit réel 526-727 m³/h avec pluie quasi-nulle
+  - À H=24h, la prédiction est faite 24h avant le pic
+    → encore moins de signal d'alerte disponible qu'à H=3h
+
+Note sur le régime "Élevé" (350-500 m³/h) :
+  MAE = 88.6 m³/h à H=24h (vs ~33 m³/h à H=12h).
+  Ce régime intermédiaire (entre régime normal et crue vraie)
+  est le plus difficile à H=24h : le modèle ne sait pas si
+  demain ce sera encore une crue ou un retour à la normale.
+  À H=3h/6h/12h, la dynamique récente donnait un signal fort ;
+  à H=24h, cyclic_custom ne distingue pas ces états.
