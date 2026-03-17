@@ -1,0 +1,273 @@
+================================================================
+FEATURES DU MODÈLE XGBoost DIRECT H=6h — Station P
+================================================================
+Modèle : XGBoost, prédiction directe du débit à t+6h
+Données : post-shift (2025-04-03 → 2026-01-06)
+Nb total de features : 58  (36 G6 adapté + 22 G12 élargi)
+
+Ce fichier se concentre sur les DIFFÉRENCES avec le modèle H=3h.
+Pour la description complète des features communes, voir :
+  → features_explanation.txt  (modèle H=3h)
+
+================================================================
+POURQUOI H=6h CHANGE LES FEATURES
+================================================================
+
+À H=3h, la prédiction est proche : le débit actuel et le cycle
+humain (heure de la journée) sont très informatifs car le système
+change peu en 3h. À H=6h, deux choses changent :
+
+1. Le cycle journalier perd de son pouvoir prédictif.
+   En 6h, le système peut faire un demi-cycle humain complet
+   (ex: prévoir à 8h pour 14h, la dynamique est très différente).
+   Résultat observé : hour_cos passe de #1 à 25% (H=3h) → #3 à 6.6% (H=6h)
+
+2. L'état hydraulique du système (montée/descente en cours)
+   devient la signal dominant.
+   La question "est-ce que ça monte encore dans 6h ?" dépend
+   beaucoup plus de la dynamique passée que de l'heure.
+   Résultat : debit_min_12h passe de #13 à 1.4% (H=3h) → #1 à 12.2% (H=6h)
+
+3. La pluie future sur 6h (pas seulement 3h) est disponible
+   et devient critique.
+   prev_pluie_6h (absent à H=3h) → #2 à 7.3% (H=6h)
+
+================================================================
+ABLATION STUDY — CHOIX DES FEATURES (quick_ablation_6h.py)
+================================================================
+
+3 configs testées par sliding window CV (10 folds) :
+
+Config                              | MAE CV | ΔMAE
+------------------------------------|--------|------
+H3-G6 (features H=3h sans adapt.)  | 51.57  |  ref
+H6-G6 (G6 adapté, prev jusqu'à 6h) | 49.61  | -1.96
+H6-G12 (G6+lags+baseflow élargi)   | 49.47  | -2.11  ← retenu
+
+Conclusion : les deux adaptations apportent chacune un gain réel.
+La config H6-G12 est retenue (meilleure MAE CV).
+
+================================================================
+GROUPE G6 ADAPTÉ H=6h  (36 features)
+================================================================
+Base commune identique au H=3h, avec les modifications suivantes :
+
+──────────────────────────────────────────────────────────────
+A) PENTES TEMPORELLES — Extension à 6h et 12h
+──────────────────────────────────────────────────────────────
+
+slope_6h   =  debit(t) − debit(t−6)   [AJOUT H=6h]
+slope_12h  =  debit(t) − debit(t−12)  [AJOUT H=6h]
+
+  À H=3h, slope_1h et slope_3h suffisent pour voir la dynamique
+  immédiate. À H=6h, on a besoin d'une vue plus longue :
+  - slope_6h capture la tendance sur la même durée que l'horizon
+    → si +200 m³/h sur 6h, le système sera probablement encore
+    en montée dans 6h
+  - slope_12h capture les tendances de fond (début de crue vs
+    retour à la normale)
+  Importance : slope_6h ~1.2%, slope_12h ~0.8%
+
+──────────────────────────────────────────────────────────────
+B) INTENSITÉ PLUIE — Extension à 6h
+──────────────────────────────────────────────────────────────
+
+rain_max_6h  =  max de pluie horaire sur 6 dernières heures (mm)
+  [AJOUT H=6h]
+
+  Complète rain_max_3h (déjà présent) pour couvrir une fenêtre
+  plus longue. À H=6h, un pic de pluie 5h avant peut encore
+  générer une montée du débit. Importance ~1.5%.
+
+──────────────────────────────────────────────────────────────
+C) PLUIE FUTURE — Étendue à H=6h  [CHANGEMENT MAJEUR]
+──────────────────────────────────────────────────────────────
+
+À H=3h :  prev_pluie_1h, 2h, 3h  +  prev_pluie_cumul  (=somme 3h)
+À H=6h :  prev_pluie_1h, 2h, 3h, 4h, 5h, 6h  +  prev_pluie_cumul_6h
+
+  Les 3 nouvelles features :
+
+  prev_pluie_4h  =  pluie réelle à t+4h   [AJOUT H=6h]
+  prev_pluie_5h  =  pluie réelle à t+5h   [AJOUT H=6h]  → importance 4.0% (#7)
+  prev_pluie_6h  =  pluie réelle à t+6h   [AJOUT H=6h]  → importance 7.3% (#2 !)
+
+  prev_pluie_cumul_6h  =  somme(prev_pluie_1h à 6h)       → importance 4.5% (#6)
+  [REMPLACE prev_pluie_cumul = somme 3h]
+
+  Pourquoi prev_pluie_6h est-il si important (#2, 7.3%) ?
+  C'est la pluie qui tombe exactement à l'instant de la prédiction
+  (t+6h). Si la pluie est forte à cet instant, le débit sera
+  élevé. C'est un signal direct et très fort — l'équivalent de
+  "regarder par la fenêtre" à l'horizon voulu.
+
+  Note : comme pour H=3h, on utilise les valeurs réelles (oracle).
+  En production → prévisions météo à H=1-6h (très fiables
+  pour les précipitations à court terme, erreur < 0.8mm).
+
+──────────────────────────────────────────────────────────────
+D) FEATURES INCHANGÉES vs H=3h
+──────────────────────────────────────────────────────────────
+
+Toutes les features G6 suivantes sont identiques (voir features_explanation.txt) :
+  - debit, debit_lag1/3/6/24/48/7d
+  - slope_1h, slope_3h
+  - rain_sum_3h/6h/24h/3d/7d, rain_max_3h
+  - hour_sin, hour_cos, cyclic_custom
+  - ressuyage_exp, rain_exp_norm, is_raining_hard
+  - is_weekend, is_monday_morning, is_holiday
+  - en_crue, intensite_crue
+
+================================================================
+GROUPE G12 ÉLARGI POUR H=6h  (22 features)
+================================================================
+
+Même logique que G12 dans le modèle H=3h, mais élargi sur des
+fenêtres temporelles plus longues pour couvrir l'horizon de 6h.
+
+──────────────────────────────────────────────────────────────
+E) LAGS PONCTUELS DE PLUIE — Élargis à 72h
+──────────────────────────────────────────────────────────────
+
+H=3h utilisait : rain_lag_6h à rain_lag_48h  (9 lags)
+H=6h utilise  : rain_lag_6h à rain_lag_72h  (11 lags, +60h et +72h)
+
+  rain_lag_60h  =  pluie réelle à t−60h  (mm)  [AJOUT H=6h]
+  rain_lag_72h  =  pluie réelle à t−72h  (mm)  [AJOUT H=6h]
+
+  Justification : à H=6h, on prédit ce qui va se passer dans
+  6h de plus. La pluie qui tombée il y a 72h (3 jours) peut
+  encore influencer le débit dans 6h supplémentaires, surtout
+  en régime de sols saturés. Les lags jusqu'à 72h capturent
+  les épisodes pluvieux longs de 2-3 jours.
+
+──────────────────────────────────────────────────────────────
+F) DÉBIT MINIMUM RÉCENT (BASEFLOW) — Élargi à 48h  [CLÉ H=6h]
+──────────────────────────────────────────────────────────────
+
+H=3h : debit_min_6h, 12h, 24h
+H=6h : debit_min_6h, 12h, 24h, 48h  (+debit_min_48h)
+
+  debit_min_48h  =  min(debit) sur 48 dernières heures  [AJOUT H=6h]
+
+  CHANGEMENT MAJEUR D'IMPORTANCE :
+  debit_min_12h passe de #13 (1.4%) à H=3h → #1 (12.2%) à H=6h
+
+  Pourquoi ? À H=6h, la question centrale n'est plus
+  "quel est le débit dans 3h ?" (réponse : proche du débit actuel)
+  mais "est-ce que le système est encore en montée dans 6h ?"
+  Le minimum récent répond directement : si même le minimum des
+  12 dernières heures était à 450 m³/h, le système est en crue
+  continue — il sera probablement encore en crue dans 6h.
+  Si le minimum était à 150 m³/h, le système est en transition.
+
+  En résumé : à H=6h, le PLANCHER du débit (baseflow) est plus
+  informatif que le débit courant lui-même.
+
+──────────────────────────────────────────────────────────────
+G) AMPLITUDE DE LA MONTÉE — Élargie à 48h
+──────────────────────────────────────────────────────────────
+
+H=3h : debit_rise_6h, 12h, 24h
+H=6h : debit_rise_6h, 12h, 24h, 48h  (+debit_rise_48h)
+
+  debit_rise_48h  =  debit(t) − debit_min_48h   [AJOUT H=6h]
+
+  Mesure si le débit a beaucoup monté depuis 2 jours.
+  Si debit_rise_48h = 400 m³/h → grosse crue longue encore active.
+  Si debit_rise_48h = 20 m³/h → régime stable, peu de montée.
+  Importance : ~1.5% (dans le top 20, #14).
+
+──────────────────────────────────────────────────────────────
+H) INTERACTIONS ET SIGNAL CRUE RETARDÉE — Seuils adaptés
+──────────────────────────────────────────────────────────────
+
+H=3h :
+  rain_lag_24h_x_rise_6h   = rain_lag_24h × debit_rise_6h
+  rain_lag_12h_x_rise_6h   = rain_lag_12h × debit_rise_6h  (même fenêtre)
+  crue_retardee_signal      = (rise_6h > 50) ET (rain_sum_6h < 1.0)
+
+H=6h :
+  rain_lag_24h_x_rise_6h   = inchangé
+  rain_lag_12h_x_rise_12h  = rain_lag_12h × debit_rise_12h  [fenêtre élargie]
+
+  crue_retardee_signal = (debit_rise_12h > 80) ET (rain_sum_6h < 1.0)
+  [Seuil 50→80 : à H=6h, une montée de 80 m³/h sur 12h est
+   le signe d'une crue encore active dans 6h supplémentaires.
+   Seuil plus haut car les petites montées à H=3h ne persistent
+   pas nécessairement 6h de plus.]
+
+  Importance crue_retardee_signal : 1.9% (#9) à H=6h
+  vs ~0.5% à H=3h → signal plus utile sur horizon long.
+
+================================================================
+ÉVOLUTION DES IMPORTANCES : H=3h → H=6h
+================================================================
+
+Feature               | H=3h rang | H=3h %  | H=6h rang | H=6h %  | Δ
+----------------------|-----------|---------|-----------|---------|------
+hour_cos              |    #1     |  25.6%  |    #3     |   6.6%  | -19%  ↓↓↓
+debit_min_12h         |   #13     |   1.4%  |    #1     |  12.2%  | +11%  ↑↑↑
+prev_pluie_6h         |  absent   |    —    |    #2     |   7.3%  | ajout ★
+prev_pluie_cumul      |    #2     |   8.9%  | remplacé  |    —    | →6h
+prev_pluie_cumul_6h   |  absent   |    —    |    #6     |   4.5%  | ajout ★
+prev_pluie_5h         |  absent   |    —    |    #7     |   4.0%  | ajout ★
+debit_rise_12h        |    #4     |   5.1%  |    #8     |   3.7%  | -1.4% ↓
+crue_retardee_signal  |   ~#20    |  ~0.5%  |    #9     |   1.9%  | +1.4% ↑
+en_crue               |    #3     |   7.5%  |  hors top |  <1.0%  | ↓↓
+hour_sin              |    #9     |   2.4%  |    #4     |   6.4%  | +4.0% ↑
+cyclic_custom         |    #8     |   2.7%  |    #5     |   5.7%  | +3.0% ↑
+
+Lectures :
+  → Le cycle journalier (hour_cos, hour_sin, cyclic) perd 1/4 de
+    son importance à H=6h mais reste dans le top 5
+  → Le baseflow (debit_min) devient la feature la plus importante
+  → La pluie future à H+4h, H+5h, H+6h devient cruciale
+  → en_crue (binaire) sort du top 20 : il est "absorbé" par
+    debit_min qui donne une info plus précise sur le niveau de base
+
+================================================================
+PERFORMANCES COMPARÉES H=3h vs H=6h
+================================================================
+
+Métrique          |  H=3h   |  H=6h   |  Écart
+------------------|---------|---------|--------
+MAE test (m³/h)   |  40.54  |  42.79  |  +2.25 (+5.5%)
+RMSE test (m³/h)  |  60.41  |  66.44  |  +6.03
+R² test           |  0.712  |  0.652  |  -0.060
+MAEpics (m³/h)    | 135.20  | 159.95  |  +24.8 (+18%)
+MAEpluie (m³/h)   | 104.32  |  79.53  |  -24.8 (-24%) ↓ meilleur !
+MAE naïf (m³/h)   |  80.97  | 117.52  |  +36.6  (naïf dégrade plus)
+Gain vs naïf      |  49.9%  |  63.6%  |  +13.7%
+Biais (m³/h)      |  -0.96  |  -1.83  |  ↔ quasi nul
+% dans LoA        |  94.3%  |  93.9%  |  ↔ stable
+
+Interprétation :
+  - La MAE globale augmente peu (+5.5%) malgré un horizon 2× plus long
+  - MAEpluie meilleure à H=6h (-24%) : les 6 features de pluie future
+    (prev_pluie_4h/5h/6h + cumul_6h) couvrent exactement la fenêtre
+    → le modèle sait précisément quelle pluie va tomber jusqu'à t+6h
+  - MAEpics augmente davantage (+18%) : les pics de crue extrêmes
+    (530-720 m³/h) restent difficiles sur 6h (mêmes événements déc 2025)
+  - Le gain vs naïf est meilleur à H=6h (64% vs 50%) car la persistence
+    simple se dégrade beaucoup plus vite sur 6h que sur 3h
+
+================================================================
+HYPERPARAMÈTRES — DIFFÉRENCES H=3h vs H=6h
+================================================================
+
+Paramètre         |  H=3h  |  H=6h  |  Commentaire
+------------------|--------|--------|--------------------------------
+max_depth         |    6   |    6   |  identique
+learning_rate     |  0.05  |  0.03  |  plus lent pour H=6h (tâche plus difficile)
+subsample         |  0.9   |  0.9   |  identique
+colsample_bytree  |  0.9   |  0.7   |  moins de features par arbre à H=6h
+n_estimators      |  300   |  300   |  identique (après scaling)
+n_features        |   48   |   58   |  +10 features adaptées H=6h
+
+Le learning_rate plus faible à H=6h (0.03 vs 0.05) est cohérent :
+la relation entre features et cible est plus complexe sur 6h,
+le modèle a besoin d'apprendre plus progressivement.
+colsample_bytree plus faible (0.7 vs 0.9) : avec 58 features
+(vs 48), réduire la fraction par arbre force plus de diversité
+et réduit la corrélation entre arbres.

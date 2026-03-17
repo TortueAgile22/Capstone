@@ -1,0 +1,16 @@
+Heures totales       : 6721
+Heures sans pluie    : 5518  (82.1%)
+Heures pluie > 0     : 1203  (17.9%)
+Heures pluie > 0.5mm : 266  (4.0%)
+Heures pluie > 1mm   : 146  (2.2%)
+Heures pluie > 2mm   : 53  (0.8%)
+Heures pluie > 5mm   : 7  (0.1%)
+Heures pluie > 10mm  : 0  (0.0%)
+
+Quand il pleut (rain>0) :
+  M�diane  : 0.14 mm/h
+  Moyenne  : 0.45 mm/h
+  P75      : 0.43 mm/h
+  P90      : 1.11 mm/h
+  P95      : 1.80 mm/h
+  Max      : 8.76 mm/h

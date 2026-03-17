@@ -1,0 +1,367 @@
+================================================================
+FEATURES DU MODÈLE XGBoost DIRECT H=12h — Station P
+================================================================
+Modèle : XGBoost, prédiction directe du débit à t+12h
+Données : post-shift (2025-04-03 → 2026-01-06)
+Nb total de features : 73  (47 G6 adapté + 26 G12 élargi)
+
+Ce fichier se concentre sur les DIFFÉRENCES avec les modèles
+H=3h et H=6h. Pour la description complète des features
+communes, voir :
+  → features_explanation.txt      (modèle H=3h)
+  → features_explanation_6H.txt   (modèle H=6h, diff. vs H=3h)
+
+================================================================
+POURQUOI H=12h CHANGE LES FEATURES (ET SURPREND)
+================================================================
+
+À H=12h, trois phénomènes distincts entrent en jeu :
+
+1. Le lag de débit à 12h devient la feature la plus utile.
+   A H=12h, regarder le débit d'il y a exactement 12h revient
+   à exploiter la semi-périodicité journalière : les débits
+   suivent un cycle humain (nuit calme, pic matin/soir), et
+   il y a 12h, on était dans la même phase du cycle.
+   Résultat : debit_lag12 → #1 à 9.1%
+
+2. Le cycle circadien redevient dominant via cyclic_custom.
+   Contre-intuitivement, le cycle journalier est plus utile
+   à H=12h qu'à H=6h. Pourquoi ? À H=6h on est "entre deux
+   phases" (ex: prévoir 14h depuis 8h est difficile). À H=12h
+   on retrouve la même demi-journée → cyclic_custom #2 (8.5%)
+
+3. Le baseflow (debit_min) perd son rôle dominant.
+   À H=6h : debit_min_12h = #1 (12.2%) — signal clé de crue.
+   À H=12h : debit_min_12h = #19 (1.2%) — presque inutile.
+   En 12h, même une crue forte peut se terminer. Le minimum
+   récent ne garantit plus que le débit sera encore élevé.
+   Ce rôle est absorbé par debit_lag12 (état exact il y a 12h).
+
+4. SURPRISE : MAE H=12h (41.66) < MAE H=6h (42.79).
+   H=12h est objectivement plus difficile (naïf : 147 vs 117),
+   mais le modèle est meilleur grâce à debit_lag12 + cyclic.
+   La semi-périodicité est un "raccourci" que H=6h n'a pas.
+   Le gain vs naïf est aussi meilleur : 71.7% vs 63.6%.
+
+5. La pluie future couvre exactement la fenêtre H=12h.
+   prev_pluie_12h (rain oracle à t+12h) = #3 (7.2%).
+   Tous les pas horaires 7h à 12h sont dans le top 20.
+   MAEpluie = 56.38 m³/h (meilleure que H=6h=79.53 et H=3h=104).
+
+================================================================
+ABLATION STUDY — CHOIX DES FEATURES (quick_ablation_12h.py)
+================================================================
+
+3 configs testées par sliding window CV (10 folds) :
+
+Config                                  | MAE CV | ΔMAE
+----------------------------------------|--------|------
+H6-G12 (features H=6h sans adapt.)     | 54.66  |  ref
+H12-G6 (G6 adapté, prev jusqu'à 12h)   | 49.22  | -5.44
+H12-G12 (G6+lags+baseflow élargi)      | 48.92  | -5.74  ← retenu
+
+Conclusion :
+  - Sans adaptation (H6-G12 à H=12h), le modèle perd -5.74 de
+    MAE par rapport à H12-G12 : les features 6h sont trop courtes
+  - Le gain de G12 sur G6 est plus modeste qu'à H=3h (-0.30 seulement)
+    car debit_lag12 capture déjà beaucoup de l'information d'état
+  - La config H12-G12 est retenue (meilleure MAE CV = 48.92)
+
+================================================================
+GROUPE G6 ADAPTÉ H=12h  (47 features)
+================================================================
+Base commune identique au H=6h, avec les modifications suivantes :
+
+──────────────────────────────────────────────────────────────
+A) LAGS DE DÉBIT — Ajout de debit_lag12  [CHANGEMENT MAJEUR]
+──────────────────────────────────────────────────────────────
+
+debit_lag12  =  débit réel à t−12h   [AJOUT H=12h]
+
+  Justification physique :
+  La consommation d'eau en zone semi-urbaine/industrielle suit
+  un rythme journalier. Il y a 12h, on était dans la même
+  "demi-journée". Si le débit était X à t−12h et que la météo
+  est similaire, il sera proche de X à t+12h.
+  C'est la feature la plus importante du modèle : #1 à 9.1%.
+
+  Note : cette feature n'est pas ajoutée à H=3h ou H=6h car
+  elle représente l'état du système il y a 12h — trop ancien
+  pour prédire le futur proche (3h ou 6h), mais parfait pour
+  la symétrie demi-journalière à H=12h.
+
+──────────────────────────────────────────────────────────────
+B) PENTES TEMPORELLES — Extension à 12h et 24h
+──────────────────────────────────────────────────────────────
+
+slope_12h  =  debit(t) − debit(t−12)   [AJOUT H=12h]  → #11 (1.4%)
+slope_24h  =  debit(t) − debit(t−24)   [AJOUT H=12h]
+
+  À H=12h, slope_6h (utilisée à H=6h) est trop courte pour
+  décrire la dynamique sur 12h. slope_12h capture si le système
+  est en montée ou descente sur la même durée que l'horizon.
+  slope_24h identifie les tendances de fond (début de crue
+  sur 24h vs retour à la normale).
+
+  Exemple : slope_12h = +150 → le débit monte depuis 12h
+  → probable continuation de la montée dans les 12h suivantes.
+
+──────────────────────────────────────────────────────────────
+C) INTENSITÉ PLUIE — Extension à 12h
+──────────────────────────────────────────────────────────────
+
+rain_sum_12h  =  cumul de pluie sur 12 dernières heures (mm)
+rain_max_12h  =  max de pluie horaire sur 12 dernières heures (mm)
+  [AJOUT H=12h]
+
+  Déjà présents : rain_sum_3h, rain_sum_6h, rain_sum_24h, etc.
+  rain_sum_12h complète la couverture pour la fenêtre exacte
+  de l'horizon. Un cumul de 20mm sur 12h est un signal fort
+  pour une crue encore active dans 12h supplémentaires.
+
+──────────────────────────────────────────────────────────────
+D) PLUIE FUTURE — Étendue à H=12h  [CHANGEMENT MAJEUR]
+──────────────────────────────────────────────────────────────
+
+À H=6h :   prev_pluie_1h à 6h   +  prev_pluie_cumul_6h
+À H=12h :  prev_pluie_1h à 12h  +  prev_pluie_cumul_12h
+
+  Les 6 nouvelles features :
+
+  prev_pluie_7h   =  pluie réelle à t+7h    [AJOUT H=12h]
+  prev_pluie_8h   =  pluie réelle à t+8h    [AJOUT H=12h]  → #14 (1.3%)
+  prev_pluie_9h   =  pluie réelle à t+9h    [AJOUT H=12h]  → #9  (2.5%)
+  prev_pluie_10h  =  pluie réelle à t+10h   [AJOUT H=12h]  → #6  (2.9%)
+  prev_pluie_11h  =  pluie réelle à t+11h   [AJOUT H=12h]  → #4  (4.8%)
+  prev_pluie_12h  =  pluie réelle à t+12h   [AJOUT H=12h]  → #3  (7.2%) !
+
+  prev_pluie_cumul_12h  =  somme(prev_pluie_1h à 12h)      → #7  (2.8%)
+  [REMPLACE prev_pluie_cumul_6h]
+
+  Pourquoi prev_pluie_12h est-il si important (#3, 7.2%) ?
+  Identique à la logique H=6h : c'est la pluie qui tombe exactement
+  à l'instant de la prédiction. Signal direct très fort.
+  La progression 7h→12h dans les rangs (14→9→6→4→3) montre que
+  les heures les plus proches de l'horizon sont les plus utiles :
+  la pluie à t+12h est plus informative que la pluie à t+7h.
+
+  MAEpluie = 56.38 m³/h : meilleure que H=6h (79.53) et H=3h (104.32)
+  car les 12 features de pluie future couvrent exactement la fenêtre.
+
+──────────────────────────────────────────────────────────────
+E) FEATURES INCHANGÉES vs H=6h
+──────────────────────────────────────────────────────────────
+
+Toutes les features G6 suivantes sont identiques :
+  - debit, debit_lag1/3/6/24/48/7d
+  - slope_1h, slope_3h, slope_6h
+  - rain_sum_3h/6h/24h/3d/7d, rain_max_3h, rain_max_6h
+  - hour_sin, hour_cos, cyclic_custom
+  - ressuyage_exp, rain_exp_norm, is_raining_hard
+  - is_weekend, is_monday_morning, is_holiday
+  - en_crue, intensite_crue
+  - prev_pluie_1h à 6h (conservés en plus de 7h-12h)
+  - prev_pluie_cumul_6h (conservé, puis cumul_12h en plus)
+
+================================================================
+GROUPE G12 ÉLARGI POUR H=12h  (26 features)
+================================================================
+
+Même logique que G12 dans les modèles H=3h/6h, mais élargi
+sur des fenêtres temporelles encore plus longues pour H=12h.
+
+──────────────────────────────────────────────────────────────
+F) LAGS PONCTUELS DE PLUIE — Élargis à 96h
+──────────────────────────────────────────────────────────────
+
+H=6h utilisait : rain_lag_6h à rain_lag_72h  (11 lags)
+H=12h utilise  : rain_lag_6h à rain_lag_96h  (13 lags)
+
+  rain_lag_84h  =  pluie réelle à t−84h  (mm)  [AJOUT H=12h]
+  rain_lag_96h  =  pluie réelle à t−96h  (mm)  [AJOUT H=12h]
+
+  Justification : à H=12h, on prédit dans 12h de plus qu'à H=6h.
+  La pluie tombée il y a 96h (4 jours) peut encore influencer
+  le débit dans 12h supplémentaires en régime de sols saturés.
+  Les bassins versants urbains ont des temps de réponse longs
+  pour les sols : l'eau infiltrée met parfois 3-4 jours à
+  ressortir via les nappes phréatiques peu profondes.
+
+──────────────────────────────────────────────────────────────
+G) DÉBIT MINIMUM RÉCENT (BASEFLOW) — Élargi à 72h
+──────────────────────────────────────────────────────────────
+
+H=6h : debit_min_6h, 12h, 24h, 48h
+H=12h : debit_min_6h, 12h, 24h, 48h, 72h  (+debit_min_72h)
+
+  debit_min_72h  =  min(debit) sur 72 dernières heures  [AJOUT H=12h]
+
+  CHANGEMENT MAJEUR D'IMPORTANCE PAR RAPPORT À H=6h :
+  debit_min_12h :  H=6h #1 (12.2%)  →  H=12h #19 (1.2%)
+  debit_min_6h  :  H=6h #11 (1.7%) →  H=12h #10 (1.8%)  (stable)
+  debit_min_72h :  absent à H=6h   →  H=12h #16 (1.3%)
+
+  Pourquoi le baseflow chute-t-il d'importance à H=12h ?
+  À H=6h : si le minimum des 12 dernières heures était à 450 m³/h,
+  il sera probablement encore à 400+ m³/h dans 6h → signal fort.
+  À H=12h : en 12h supplémentaires, le débit peut redescendre
+  de 450 à 150 m³/h (les crues durent souvent 6-18h). Le minimum
+  ne garantit plus rien. debit_lag12 (état exact il y a 12h)
+  remplace avantageusement ce signal.
+
+──────────────────────────────────────────────────────────────
+H) AMPLITUDE DE LA MONTÉE — Élargie à 72h
+──────────────────────────────────────────────────────────────
+
+H=6h : debit_rise_6h, 12h, 24h, 48h
+H=12h : debit_rise_6h, 12h, 24h, 48h, 72h  (+debit_rise_72h)
+
+  debit_rise_72h  =  debit(t) − debit_min_72h   [AJOUT H=12h]
+
+  Mesure si le débit a beaucoup monté depuis 3 jours.
+  Importance modeste (~1%) mais utile pour les épisodes
+  pluvieux longs (3-4 jours) rares mais intenses.
+
+──────────────────────────────────────────────────────────────
+I) INTERACTIONS ET SIGNAL CRUE RETARDÉE — Seuils adaptés H=12h
+──────────────────────────────────────────────────────────────
+
+H=6h :
+  rain_lag_24h × rise_6h
+  rain_lag_12h × rise_12h
+  crue_retardee_signal = (rise_12h > 80) ET (rain_sum_6h < 1.0)
+
+H=12h :
+  rain_lag_24h × rise_12h   [fenêtre élargie vs H=6h]
+  rain_lag_48h × rise_24h   [interaction longue portée - nouveau]
+
+  crue_retardee_signal = (debit_rise_24h > 120) ET (rain_sum_12h < 2.0)
+  [Seuils adaptés H=12h :]
+  - rise_24h > 120 m³/h : à H=12h, on a besoin d'une montée plus
+    prononcée (sur 24h) pour qu'elle soit encore active dans 12h.
+    À H=6h, 80 m³/h sur 12h suffisait (fenêtre plus courte).
+  - rain_sum_12h < 2.0 mm : à H=12h, même 2mm de pluie sur 12h
+    est "faible" — la crue est bien due au ruissellement retardé,
+    pas à la pluie en cours. Le seuil est plus permissif.
+
+  Importance crue_retardee_signal à H=12h : non dans le top 20
+  (signal moins discriminant car debit_lag12 capture déjà l'état
+  de la crue de manière plus directe).
+
+================================================================
+ÉVOLUTION DES IMPORTANCES : H=3h → H=6h → H=12h
+================================================================
+
+Feature               | H=3h rang | H=3h % | H=6h rang | H=6h %  | H=12h rang | H=12h %
+----------------------|-----------|--------|-----------|---------|------------|--------
+debit_lag12           |  absent   |   —    |  absent   |   —     |    #1      |  9.1%  ★
+cyclic_custom         |    #8     |  2.7%  |    #5     |  5.7%   |    #2      |  8.5%  ↑↑
+prev_pluie_12h        |  absent   |   —    |  absent   |   —     |    #3      |  7.2%  ★
+prev_pluie_11h        |  absent   |   —    |  absent   |   —     |    #4      |  4.8%  ★
+hour_cos              |    #1     | 25.6%  |    #3     |  6.6%   |    #5      |  3.6%  ↓↓↓
+prev_pluie_10h        |  absent   |   —    |  absent   |   —     |    #6      |  2.9%  ★
+prev_pluie_cumul_12h  |  absent   |   —    |  absent   |   —     |    #7      |  2.8%  ★
+hour_sin              |    #9     |  2.4%  |    #4     |  6.4%   |    #8      |  2.8%  ↓
+prev_pluie_9h         |  absent   |   —    |  absent   |   —     |    #9      |  2.5%  ★
+debit_min_6h          |    #?     |  <1%   |   #11     |  1.7%   |   #10      |  1.8%  ≈
+debit_min_12h         |   #13     |  1.4%  |    #1     | 12.2%   |   #19      |  1.2%  ↓↓↓
+debit_rise_12h        |    #4     |  5.1%  |    #8     |  3.7%   |   #20      |  1.2%  ↓↓
+prev_pluie_6h         |  absent   |   —    |    #2     |  7.3%   |  (stable)  |  ~1%   ↓
+crue_retardee_signal  |   ~#20    |  ~0.5% |    #9     |  1.9%   |  hors top  |  <1%   ↓
+
+Lectures :
+  → debit_lag12 apparaît ex-nihilo en #1 : exploit de la
+    semi-périodicité journalière, unique à H=12h
+  → hour_cos continue de perdre de l'importance (-22% sur 3 horizons)
+    mais reste dans le top 5 (le cycle humain reste utile)
+  → cyclic_custom monte régulièrement (#8 → #5 → #2) : à H=12h,
+    le profil moyen saisonnier-journalier est le meilleur guide
+  → debit_min_12h : montre en flèche à H=6h (#1, 12.2%), puis
+    s'effondre à H=12h (#19, 1.2%) — phénomène intéressant
+  → debit_rise_12h suit le même effondrement à H=12h (#4 → #20)
+  → La pluie future 7h-12h domine les nouvelles features
+
+================================================================
+PERFORMANCES COMPARÉES H=3h / H=6h / H=12h
+================================================================
+
+Métrique          |  H=3h   |  H=6h   |  H=12h  |  Commentaire
+------------------|---------|---------|---------|------------------------------------
+MAE test (m³/h)   |  40.54  |  42.79  |  41.66  |  H=12h meilleur que H=6h (!!)
+RMSE test (m³/h)  |  60.41  |  66.44  |  64.59  |  idem
+R² test           |  0.712  |  0.652  |  0.671  |  idem
+MAEpics (m³/h)    | 135.20  | 159.95  | 157.35  |  H=12h légèrement meilleur que H=6h
+MAEpluie (m³/h)   | 104.32  |  79.53  |  56.38  |  amélioration continue ↓ !!
+MAE naïf (m³/h)   |  80.97  | 117.52  | 147.34  |  le naïf se dégrade vite
+Gain vs naïf      |  49.9%  |  63.6%  |  71.7%  |  amélioration continue ↑
+Biais (m³/h)      |  -0.96  |  -1.83  |  -0.59  |  quasi nul, stable
+% dans LoA        |  94.3%  |  93.9%  |  93.8%  |  très stable (~94%)
+n_features        |   48    |   58    |   73    |
+
+Interprétations clés :
+  - MAE H=12h < MAE H=6h (41.66 < 42.79) : contre-intuitif !
+    Explication : la semi-périodicité journalière (debit_lag12 +
+    cyclic_custom) donne au modèle H=12h un "raccourci" que H=6h
+    n'a pas. H=6h est le cas "le plus dur" car ni assez court
+    pour profiter de l'inertie, ni assez long pour profiter
+    du cycle demi-journalier.
+
+  - MAEpluie s'améliore continuellement (104 → 79 → 56) :
+    plus l'horizon est long, plus on a de features de pluie future
+    qui couvrent exactement la fenêtre. Les 12 features prev_pluie
+    donnent une couverture parfaite de la fenêtre 1h-12h.
+
+  - Gain vs naïf s'améliore continuellement (50% → 64% → 72%) :
+    le modèle bénéficie de plus en plus par rapport au naïf car
+    la persistence simple est de moins en moins viable sur 12h.
+
+  - % dans LoA quasi-constant (94%) : la dispersion des erreurs
+    reste similaire aux trois horizons — les mêmes types d'erreurs
+    persistent (pics de crue extrêmes de décembre 2025).
+
+================================================================
+HYPERPARAMÈTRES — DIFFÉRENCES H=3h / H=6h / H=12h
+================================================================
+
+Paramètre         |  H=3h  |  H=6h  |  H=12h |  Commentaire
+------------------|--------|--------|--------|--------------------------------
+max_depth         |    6   |    6   |    6   |  identique
+learning_rate     |  0.05  |  0.03  |  0.03  |  ralenti pour H=6h/12h
+subsample         |  0.9   |  0.9   |  0.9   |  identique
+colsample_bytree  |  0.9   |  0.7   |  0.7   |  réduit à partir de H=6h
+n_estimators      |  300   |  300   |  300   |  identique (après scaling)
+n_features        |   48   |   58   |   73   |  +10 à H=6h, +15 à H=12h
+
+Le colsample_bytree = 0.7 (vs 0.9 à H=3h) est maintenu à H=12h :
+avec 73 features (vs 48), forcer le modèle à n'utiliser que 70%
+des features par arbre (≈51 features) maintient la diversité.
+
+Le learning_rate = 0.03 est maintenu : la relation entre les
+features et le débit à 12h est complexe (semi-périodicité,
+crues retardées), le modèle doit apprendre progressivement.
+
+================================================================
+PIRES ERREURS ET LIMITES RESTANTES
+================================================================
+
+Top erreurs (test set) :
+  05/12 12h  reel=690  pred=301  err=389  pluie=0.0mm  rise24h=257
+  05/12 13h  reel=631  pred=269  err=362  pluie=0.0mm  rise24h=252
+  07/12 00h  reel=727  pred=393  err=335  pluie=0.0mm  rise24h=44
+  07/12 01h  reel=689  pred=361  err=328  pluie=0.0mm  rise24h=33
+  08/12 22h  reel=1    pred=290  err=289  pluie=0.0mm  rise24h=175 ← anomalie capteur
+
+Pattern constant sur les 3 horizons :
+  - Crues du 05/12, 07/12, 18/12, 21/12 de décembre 2025
+  - Débit réel 531-727 m³/h, pluie = 0.0mm (ruissellement retardé)
+  - rise24h faible (25-257) : le système montait doucement sans signal fort
+  - Erreur fondamentale : amplitudes extrêmes des crues difficiles à prédire
+
+Limite principale (commune aux 3 horizons) :
+  XGBoost est un modèle de régression sans état interne.
+  Il voit les features instantanées (slope, rise, lag) mais
+  ne "comprend" pas la dynamique cumulée d'un bassin versant
+  sur plusieurs jours. Les pics à 690-727 m³/h du 5-7 décembre
+  résultent de plusieurs épisodes pluvieux combinés sur 48-72h,
+  avec saturation des sols — un modèle séquentiel (LSTM) serait
+  théoriquement mieux adapté pour ces événements rares.

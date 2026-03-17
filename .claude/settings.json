@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(\"/c/Users/Cecil/anaconda3/envs/ml/python.exe\" py_ipynb_files/Cecile/modele_multihorizon.py)",
+      "Bash(xargs grep:*)",
+      "Bash(python3:*)",
+      "Bash(\"/c/Users/Cecil/anaconda3/envs/ml/python.exe\" \"py_ipynb_files/Cecile/quick_test_2025.py\")"
+    ]
+  }
+}

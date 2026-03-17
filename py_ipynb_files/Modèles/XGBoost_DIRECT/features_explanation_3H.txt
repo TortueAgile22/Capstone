@@ -1,0 +1,337 @@
+================================================================
+FEATURES DU MODÈLE XGBoost DIRECT H=3h — Station P
+================================================================
+Modèle : XGBoost, prédiction directe du débit à t+3h
+Données : post-shift (2025-04-03 → 2026-01-06), données post-recalibrage capteur
+Nb total de features : 48  (30 G6 + 18 G12)
+
+Les features sont divisées en deux groupes :
+  G6  — Baseline (sélectionnées par ablation study modele_XGBoost_finalV1)
+  G12 — Anti-crues retardées (ajoutées dans modele_XGBoost_finalV4)
+
+================================================================
+GROUPE G6 — BASELINE  (30 features)
+================================================================
+Ces features ont été validées par une ablation study progressive
+(modele_XGBoost_finalV1.py). La config finale G6 obtient :
+  MAE_test = 39.93 m³/h | R² = 0.717 | MAEpics = 131.33 m³/h
+
+──────────────────────────────────────────────────────────────
+A) DÉBIT — État courant et lags
+──────────────────────────────────────────────────────────────
+
+debit
+  Débit mesuré à l'instant t (m³/h), avant le shift de H=3h.
+  Feature de base : le modèle part du débit actuel pour prédire
+  le débit futur. Importance ~2%.
+
+slope_1h  =  debit(t) − debit(t−1)
+  Variation du débit sur la dernière heure (m³/h/h).
+  Capture la dynamique instantanée : montée ou descente en cours.
+  Importance ~2%.
+
+slope_3h  =  debit(t) − debit(t−3)
+  Variation sur 3h. Moins sensible au bruit que slope_1h,
+  capture la tendance à court terme. Importance ~2%.
+
+debit_lag1   =  debit(t−1)   [lag 1h]
+debit_lag3   =  debit(t−3)   [lag 3h]
+debit_lag6   =  debit(t−6)   [lag 6h]
+debit_lag24  =  debit(t−24)  [lag 24h]
+debit_lag48  =  debit(t−48)  [lag 48h]
+debit_lag7d  =  debit(t−168) [lag 7 jours]
+  Lags temporels du débit. Permettent au modèle de voir l'historique
+  récent et d'apprendre des patterns de retour au régime normal
+  après une crue. Le lag 24h capture la répétabilité du cycle
+  journalier. Le lag 7 jours capture la saisonnalité hebdomadaire.
+
+──────────────────────────────────────────────────────────────
+B) PLUIE — Passé et futur proche
+──────────────────────────────────────────────────────────────
+
+rain_sum_3h   =  somme de pluie sur les 3 dernières heures (mm)
+rain_sum_6h   =  somme de pluie sur les 6 dernières heures (mm)
+rain_sum_24h  =  somme de pluie sur les 24 dernières heures (mm)
+rain_sum_3d   =  somme de pluie sur 3 jours (72h) (mm)
+rain_sum_7d   =  somme de pluie sur 7 jours (168h) (mm)
+  Cumuls sur différentes échelles de temps. Capturent l'intensité
+  d'un épisode pluvieux (3h, 6h) et la recharge progressive du
+  bassin versant (3 jours, 7 jours). rain_sum_7d est un proxy
+  de la saturation des sols à long terme.
+
+rain_max_3h  =  pluie max horaire sur les 3 dernières heures (mm)
+  Intensité maximale de la pluie récente. Utile car deux épisodes
+  avec même total en 3h mais répartition différente n'ont pas
+  le même impact hydraulique.
+
+prev_pluie_1h  =  pluie réelle à t+1 (mm)  [FUTUR]
+prev_pluie_2h  =  pluie réelle à t+2 (mm)  [FUTUR]
+prev_pluie_3h  =  pluie réelle à t+3 (mm)  [FUTUR]
+prev_pluie_cumul  =  prev_pluie_1h + 2h + 3h  [FUTUR]
+  Pluie qui va tomber dans les 3 prochaines heures (valeurs réelles).
+  Utiliser les valeurs futures est une hypothèse forte (oracle) :
+  en production, on utiliserait des prévisions météo à court terme.
+  C'est la feature la plus informative après hour_cos (~9%).
+  Importance combinée des 4 features : ~17%.
+  Note : cette hypothèse surestime légèrement la performance réelle,
+  mais est justifiable car les prévisions météo à H=1-3h sont
+  très fiables (erreur < 0.5mm en conditions normales).
+
+ressuyage_exp
+  =  moyenne exponentielle de la pluie avec halflife=48h.
+     Formule : EWM(rain, halflife=48h)
+  Modélise le "ressuyage" du sol : la mémoire exponentielle des
+  épisodes pluvieux passés. Plus c'est élevé, plus le sol est saturé.
+  Complémentaire à rain_sum_7d (linéaire) : donne plus de poids
+  aux épisodes récents.
+
+rain_exp_norm  =  expm1(rain / std(rain))
+  Transformation exponentielle de la pluie normalisée.
+  Met en évidence les intensités extrêmes rares (longue queue).
+  Complémentaire à rain brut pour les pics.
+
+is_raining_hard  =  1 si rain(t) > 1mm, 0 sinon
+  Flag booléen : épisode pluvieux intense en cours. Aide le modèle
+  à distinguer bruine (0.2mm → peu d'impact) vs forte pluie (>1mm).
+
+──────────────────────────────────────────────────────────────
+C) CYCLE JOURNALIER — Rythme humain
+──────────────────────────────────────────────────────────────
+
+hour_sin  =  sin(2π × heure / 24)
+hour_cos  =  cos(2π × heure / 24)
+  Encodage cyclique de l'heure. Assure la continuité entre 23h et 0h.
+  hour_cos est la feature la plus importante du modèle (~21%).
+  La station P est un réseau d'assainissement unitaire qui reçoit
+  les eaux usées domestiques : le débit suit fortement le cycle
+  d'activité humaine (douches, chasses d'eau, cuisine).
+
+cyclic_custom  =  β + α·cos(h·2π/24 + φ)² + α₂·sin(h·2π/24 + φ)
+  Profil cyclique paramétrique ajusté par régression non linéaire
+  (scipy.optimize.curve_fit) sur le profil horaire moyen du débit.
+  Paramètres obtenus : β=184.1, α=101.8, φ=-2.39, R²=0.977.
+  Représente directement le débit "attendu" à chaque heure selon
+  le cycle humain. Plus expressif que hour_sin/cos seuls.
+  Importance ~3%.
+
+──────────────────────────────────────────────────────────────
+D) CALENDRIER — Activité humaine
+──────────────────────────────────────────────────────────────
+
+is_weekend  =  1 si samedi ou dimanche, 0 sinon
+  Le week-end, le cycle journalier est décalé (lever plus tard,
+  activités différentes). Importance ~1.5%.
+
+is_monday_morning  =  1 si lundi et heure < 10h, 0 sinon
+  Le lundi matin, retour au cycle de semaine après le week-end.
+  Transition particulière souvent sous-estimée sans ce flag.
+
+is_holiday  =  1 si jour férié français, 0 sinon
+  Jours fériés = comportement similaire au week-end.
+  (Bibliothèque 'holidays', France, années 2023-2027)
+
+──────────────────────────────────────────────────────────────
+E) INDICATEURS DE CRUE
+──────────────────────────────────────────────────────────────
+
+en_crue  =  1 si debit(t) > P90 = 352.5 m³/h, 0 sinon
+  Indicateur binaire : le système est-il actuellement en crue ?
+  P90 = 90e percentile du débit sur la période post-shift.
+  Permet au modèle de changer de comportement selon le régime.
+  Importance ~16% (2e feature la plus importante).
+
+intensite_crue  =  max(debit(t) − 352.5, 0)  (m³/h au-dessus du seuil)
+  Intensité de la crue en cours. Différencie une crue de 360 m³/h
+  (légère) d'une de 700 m³/h (forte). Importance ~4-6%.
+  Complémentaire à en_crue (binaire) en donnant la magnitude.
+
+================================================================
+GROUPE G12 — FEATURES ANTI-CRUES RETARDÉES  (18 features)
+================================================================
+
+MOTIVATION :
+  L'analyse des pires erreurs (modele_XGBoost_finalV1 → V3) a
+  révélé un pattern systématique : les 5 pires erreurs du modèle
+  de base (G6) sont toutes en décembre 2025, avec peu de pluie
+  immédiate mais un débit réel de 530-690 m³/h.
+
+  Exemple concret (V1, G6 baseline) :
+    2025-12-05 21h : réel=690  prédit=241  erreur=450 m³/h  pluie=0.2mm
+    2025-12-21 18h : réel=691  prédit=342  erreur=348 m³/h  pluie=0.7mm
+    2025-12-19 03h : réel=568  prédit=238  erreur=330 m³/h  pluie=0.4mm
+
+  Ces "crues retardées" se produisent quand le sol est saturé
+  (après plusieurs jours de pluie) et que la pluie tombée 12-48h
+  avant arrive encore au capteur. La pluie immédiate est faible,
+  mais la dynamique de montée du débit est encore forte.
+
+  Les features G6 échouent car rain_sum_3h/6h ne capture pas
+  la pluie tombée 12-48h avant, et le modèle confond "peu de
+  pluie maintenant" avec "débit va baisser".
+
+  Après ajout de G12 (modele_XGBoost_finalV4) :
+    MAE CV : 47.64 → 46.92 m³/h  (−0.72, premier gain réel)
+    Pire erreur : 450 → 359 m³/h  (−20%)
+    debit_rise_12h = 3e feature la plus importante (8.4%)
+
+──────────────────────────────────────────────────────────────
+F) LAGS PONCTUELS DE PLUIE (9 features)
+──────────────────────────────────────────────────────────────
+
+rain_lag_6h   =  pluie réelle à t−6h  (mm)
+rain_lag_9h   =  pluie réelle à t−9h  (mm)
+rain_lag_12h  =  pluie réelle à t−12h (mm)
+rain_lag_15h  =  pluie réelle à t−15h (mm)
+rain_lag_18h  =  pluie réelle à t−18h (mm)
+rain_lag_24h  =  pluie réelle à t−24h (mm)
+rain_lag_30h  =  pluie réelle à t−30h (mm)
+rain_lag_36h  =  pluie réelle à t−36h (mm)
+rain_lag_48h  =  pluie réelle à t−48h (mm)
+
+  Pourquoi des lags PONCTUELS et pas des rolling sums ?
+  Les features G6 (rain_sum_24h, rain_sum_3d…) agrègent la pluie
+  sur une fenêtre → on perd l'information de QUAND exactement
+  elle est tombée. Or pour les crues retardées, la pluie tombée
+  il y a 24h précisément est celle qui arrive maintenant.
+
+  Exemple : rain_sum_24h = 8mm peut signifier :
+    (a) 8mm en une heure il y a 2h → débit va encore monter
+    (b) 8mm répartis uniformément → débit monte moins vite
+  Les lags ponctuels permettent au modèle de distinguer (a) et (b).
+
+  Les lags 12h, 24h et 48h sont les plus importants
+  (temps de transfert typiques dans le réseau d'assainissement).
+  rain_lag_48h atteint l'importance ~1.3% dans le top 25.
+
+──────────────────────────────────────────────────────────────
+G) DÉBIT MINIMUM RÉCENT — BASEFLOW (3 features)
+──────────────────────────────────────────────────────────────
+
+debit_min_6h   =  min(debit) sur les 6 dernières heures  (m³/h)
+debit_min_12h  =  min(debit) sur les 12 dernières heures (m³/h)
+debit_min_24h  =  min(debit) sur les 24 dernières heures (m³/h)
+
+  Le minimum du débit récent représente le "débit de base"
+  (baseflow) — le plancher en dessous duquel le débit n'est
+  pas descendu. Si debit_min_24h = 420 m³/h, cela signifie
+  que le débit n'a pas baissé en dessous de 420 m³/h depuis
+  24h → le système est en crue continue, même si le débit
+  actuel est à 450 m³/h (pas encore au pic mais déjà élevé).
+
+  Sans cette feature : le modèle voit debit=450 sans savoir
+  si c'est une montée (minimum=200 → va encore monter) ou
+  une descente (minimum=450 → déjà au pic, va baisser).
+
+  Importance : debit_min_24h ~1.4%, debit_min_6h ~1.4%,
+               debit_min_12h ~1.2%.
+
+──────────────────────────────────────────────────────────────
+H) AMPLITUDE DE LA MONTÉE EN CRUE (3 features)
+──────────────────────────────────────────────────────────────
+
+debit_rise_6h   =  debit(t) − debit_min_6h   (m³/h)
+debit_rise_12h  =  debit(t) − debit_min_12h  (m³/h)
+debit_rise_24h  =  debit(t) − debit_min_24h  (m³/h)
+
+  Mesure de combien le débit a monté depuis son dernier minimum.
+  Si debit_rise_12h = 200 m³/h, le débit a augmenté de 200 m³/h
+  en 12h → montée rapide, le pic n'est probablement pas atteint.
+  Si debit_rise_12h = 5 m³/h, le débit est stable → régime établi.
+
+  C'est la feature G12 la plus importante :
+    debit_rise_12h : importance = 8.4%  (3e feature globale !)
+    debit_rise_24h : importance = 3.0%  (7e feature globale)
+    debit_rise_6h  : importance = 1.7%
+
+  Impact concret sur les pires erreurs :
+    2025-12-05 21h : V1 erreur=450 → V4 erreur=331 (rise6h=73)
+    Pire erreur globale : 450 → 359 m³/h (−20%)
+
+  Pourquoi ça marche mieux que debit_accel (utilisé en V2) ?
+  debit_accel = debit(t) - debit(t-6) mesure la variation brute
+  (peut être bruit). debit_rise_12h = débit actuel - minimum sur
+  12h est plus robuste au bruit car le minimum "absorbe" les
+  variations passagères.
+
+──────────────────────────────────────────────────────────────
+I) INTERACTIONS EXPLICITES (2 features)
+──────────────────────────────────────────────────────────────
+
+rain_lag_24h_x_rise_6h  =  rain_lag_24h × debit_rise_6h
+  Interaction : pluie d'il y a 24h × montée du débit sur 6h.
+  Capture le cas spécifique "il y avait beaucoup de pluie hier
+  ET le débit monte actuellement" → signature d'une crue retardée
+  en cours d'amplification.
+
+rain_lag_12h_x_rise_6h  =  rain_lag_12h × debit_rise_6h
+  Même logique pour un lag plus court (12h). Capture les crues
+  à propagation plus rapide dans le réseau. Importance ~1.3%.
+
+  Note : XGBoost peut théoriquement apprendre ces interactions
+  seul (arbre de décision), mais les fournir explicitement
+  accélère l'apprentissage et réduit le risque de les manquer
+  dans les petits datasets.
+
+──────────────────────────────────────────────────────────────
+J) SIGNAL CRUE RETARDÉE — FLAG BOOLÉEN (1 feature)
+──────────────────────────────────────────────────────────────
+
+crue_retardee_signal  =  1 si (debit_rise_6h > 50) ET (rain_sum_6h < 1.0)
+                         0 sinon
+
+  Combinaison logique : le débit monte de plus de 50 m³/h sur 6h
+  (montée significative) MAIS il y a eu moins de 1mm de pluie
+  dans les 6 dernières heures (peu de pluie immédiate).
+  = signature exacte d'une crue retardée.
+
+  Dans le test set (nov 2025 – jan 2026) : n=525 heures (39%
+  du test) présentent ce signal → phénomène fréquent en hiver.
+
+  Utilisé aussi dans les graphiques pour visualiser les erreurs
+  liées aux crues retardées sur le Bland-Altman.
+
+================================================================
+FEATURES NON RETENUES — ET POURQUOI
+================================================================
+
+Soil moisture Open-Meteo (V3, tentative) :
+  Données : soil_moisture_0_to_7cm, _7_to_28cm, _28_to_100cm, _100_to_255cm
+  Résultat : MAE CV dégradée de +3.16 m³/h vs G6 baseline.
+  Pourquoi : en décembre, le sol est saturé en permanence pour
+  toutes les stations (soil_moisture_28_to_100cm ≈ 0.35-0.36
+  tout le mois). La feature n'est pas discriminante entre les
+  heures qui seront en crue et celles qui ne le seront pas.
+  De plus, ERA5-Land a une résolution de 9km et représente
+  une moyenne spatiale loin de la réalité du bassin versant.
+
+Features V2/G9 (ressuyage 7j, dynamique crue, interactions) :
+  Résultat : MAE CV +0.66 à +0.76 vs G6 → légère dégradation.
+  Pourquoi : les nouvelles features (ressuyage_7j, debit_roll_max,
+  rain_max_24h…) sont partiellement redondantes avec les features
+  G6 existantes. Avec seulement 9 mois de données, elles introduisent
+  du bruit. G12 est plus ciblé et moins redondant.
+
+Pluie future au-delà de H=3h :
+  Non utilisée car on ne dispose que de 3h de prévision implicite
+  (prev_pluie_1h, 2h, 3h). Au-delà, l'incertitude des prévisions
+  météo serait trop grande pour un horizon de 3h.
+
+================================================================
+RÉSUMÉ DES PERFORMANCES PAR VERSION
+================================================================
+
+Version  | Config       | MAE test | MAEpics | Pire erreur | Notes
+---------|--------------|----------|---------|-------------|------
+V1       | G6           | 39.93    | 131.33  | 450 m³/h    | baseline
+V2       | G6 + G9      | 39.93    | 131.33  | 450 m³/h    | pas d'amélioration
+V3       | G6 + soil    | 39.93    | 131.33  | 450 m³/h    | dégradation CV
+V4/FINAL | G6 + G12     | 40.10    | 131.20  | 359 m³/h    | -20% pire erreur
+         |              |          |         |             | CV : -0.72 MAE ✓
+
+Conclusion :
+  - G12 est la seule config à améliorer significativement le CV
+  - La réduction de la pire erreur (450→359) est le gain concret
+  - La limite fondamentale : les crues retardées rares (déc 2025)
+    nécessiteraient un modèle séquentiel (LSTM) pour être mieux
+    traitées — XGBoost ne peut pas exploiter la forme complète
+    de la trajectoire temporelle du débit sur 24-48h.
