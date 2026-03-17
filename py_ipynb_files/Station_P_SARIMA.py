@@ -39,7 +39,7 @@ test = series_recent[-test_size:]
 print(f"Train size: {len(train)} heures")
 print(f"Test size: {len(test)} heures")
 
-# --- 2. Grid Search SARIMAX (Saisonnalité Journalière) ---
+# --- 2. Grid Search SARIMAX (Saisonnalité Journalière) --- --> Tu peux trouver toi même les ordres optimaux. Voir package : Prophète. 
 
 # Définition de la grille
 # Attention : SARIMAX avec s=24 est très lent. On limite l'espace de recherche.
